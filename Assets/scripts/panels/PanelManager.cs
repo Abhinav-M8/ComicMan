@@ -3,37 +3,47 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 
 /// <summary>
-/// Controls comic panel layout and Artist Mode panel manipulation.
-///
-/// Artist Mode:
-/// WASD / Arrow Keys = select panel
-/// E = choose / pick up / place panel
-/// Escape = cancel panel movement
-/// Q = handled by PlayerController
+/// Controls:
+/// - Comic panel organisation
+/// - Artist Mode panel selection
+/// - Panel highlighting
+/// - Panel pickup/place/cancel
+/// - Current ComicMan panel tracking
+/// - Automatic hopping between panels
+/// - Page-based panel selection
 ///
 /// IMPORTANT:
-/// Every ComicPanel remains in the page list.
-/// A panel containing ComicMan is simply NOT allowed to move.
+/// Selection and movability are separate.
+/// A panel can be SELECTED even when it cannot be MOVED.
+///
+/// Current ComicMan panel:
+/// - remains selectable
+/// - becomes dynamically immovable
+/// - does NOT have its ComicPanel.IsMovable value changed
 /// </summary>
 public class PanelManager : MonoBehaviour
 {
-    // =========================================================
+    // ============================================================
     // SINGLETON
-    // =========================================================
+    // ============================================================
 
-    public static PanelManager Instance;
+    public static PanelManager Instance { get; private set; }
 
-    // =========================================================
+
+    // ============================================================
     // PAGE DATA
-    // =========================================================
+    // ============================================================
 
+    /// <summary>
+    /// Stores all panels belonging to one book page.
+    /// </summary>
     [System.Serializable]
     public class Page
     {
         [Header("Page Area")]
         public BoxCollider2D pageArea;
 
-        [Header("Grid")]
+        [Header("Layout")]
         public int columns = 2;
         public int rows = 2;
 
@@ -41,138 +51,115 @@ public class PanelManager : MonoBehaviour
         public List<ComicPanel> panels = new List<ComicPanel>();
     }
 
-    [Header("Pages")]
-    [SerializeField] private Page leftPage;
-    [SerializeField] private Page rightPage;
 
-    // =========================================================
-    // PLAYER REFERENCES
-    // =========================================================
+    // ============================================================
+    // REFERENCES
+    // ============================================================
 
-    [Header("Player")]
+    [Header("Player References")]
     [SerializeField] private Rigidbody2D playerBody;
     [SerializeField] private PlayerController playerController;
 
-    // =========================================================
-    // LAYOUT
-    // =========================================================
+    [Header("Pages")]
+    [SerializeField] private Page leftPage;
+    [SerializeField] private Page rightPage;
 
     [Header("Panel Layout")]
     [SerializeField] private float horizontalSpacing = 0.5f;
     [SerializeField] private float verticalSpacing = 0.5f;
     [SerializeField] private float pagePadding = 0.1f;
 
-    // =========================================================
-    // ARTIST MODE
-    // =========================================================
-
     [Header("Artist Mode")]
     [SerializeField] private bool allowArtistMode = true;
 
+    [Header("Selection Highlight")]
     [SerializeField] private Transform selectionHighlight;
-
     [SerializeField] private float selectionPadding = 0.1f;
 
-    // =========================================================
-    // HOP SETTINGS
-    // =========================================================
-
-    [Header("Hop")]
+    [Header("Automatic Hop")]
     [SerializeField] private float hopLockDuration = 0.15f;
 
-    // =========================================================
-    // CURRENT PANEL STATE
-    // =========================================================
 
+    // ============================================================
+    // PANEL STATE
+    // ============================================================
+
+    // The panel ComicMan is physically standing in.
     private ComicPanel currentPanel;
 
+    // The panel currently highlighted in Artist Mode.
     private ComicPanel selectedPanel;
 
+    // The panel chosen by pressing E before pickup.
     private ComicPanel chosenPanel;
 
+    // The panel currently being moved.
     private ComicPanel heldPanel;
 
-    // =========================================================
-    // PANEL CONTENT STATE
-    // =========================================================
-
+    // Contents controller for the held panel.
     private PanelContents heldPanelContents;
 
-    // =========================================================
+
+    // ============================================================
     // ARTIST MODE STATE
-    // =========================================================
+    // ============================================================
 
     private bool artistMode;
 
-    // =========================================================
-    // PANEL MOVEMENT STATE
-    // =========================================================
 
-    private Vector3 originalPanelPosition;
-
-    private int originalPageIndex;
-
-    private int originalSlotIndex;
-
-    // =========================================================
-    // PLAYER CARRY STATE
-    // =========================================================
+    // ============================================================
+    // PANEL PICKUP STATE
+    // ============================================================
 
     private bool carryingPlayer;
 
+    // Player's position relative to the panel before pickup.
     private Vector3 playerOffsetFromPanel;
 
-    private Vector3 originalPlayerPosition;
+    // Original panel information used when cancelling.
+    private int originalPanelPage;
+    private int originalPanelSlot;
+    private Vector3 originalPanelPosition;
 
+
+    // ============================================================
+    // PLAYER STATE DURING PANEL MOVEMENT
+    // ============================================================
+
+    private RigidbodyType2D originalPlayerBodyType;
+    private float originalPlayerGravityScale;
     private Vector2 originalPlayerVelocity;
 
-    private float originalPlayerGravityScale;
 
-    // =========================================================
-    // HOP LOCK
-    // =========================================================
+    // ============================================================
+    // AUTOMATIC HOP STATE
+    // ============================================================
 
-    private float hopLockTimer;
+    private float lastHopTime = -999f;
 
-    // =========================================================
-    // AWAKE
-    // =========================================================
 
+    // ============================================================
+    // UNITY - AWAKE
+    // ============================================================
+
+    /// <summary>
+    /// Creates the PanelManager singleton and prepares references.
+    /// </summary>
     private void Awake()
     {
-        // -----------------------------------------------------
-        // Singleton setup
-        // -----------------------------------------------------
-
         if (Instance != null && Instance != this)
         {
-            Debug.LogWarning(
-                "PANEL MANAGER: Duplicate PanelManager found. Destroying duplicate."
-            );
-
             Destroy(gameObject);
             return;
         }
 
         Instance = this;
 
-        Debug.Log("=================================================");
-        Debug.Log("PANEL MANAGER: AWAKE");
-        Debug.Log("PanelManager.Instance assigned.");
-        Debug.Log("=================================================");
-
-        // -----------------------------------------------------
-        // Automatic player references
-        // -----------------------------------------------------
-
         if (playerBody == null)
         {
-            GameObject player = GameObject.FindGameObjectWithTag("Player");
-
-            if (player != null)
-            {
-                playerBody = player.GetComponent<Rigidbody2D>();
-            }
+            Debug.LogWarning(
+                "[PANEL DEBUG] Player Body is not assigned in PanelManager."
+            );
         }
 
         if (playerController == null && playerBody != null)
@@ -180,137 +167,80 @@ public class PanelManager : MonoBehaviour
             playerController =
                 playerBody.GetComponent<PlayerController>();
         }
-
-        if (playerBody == null)
-        {
-            Debug.LogWarning(
-                "PANEL MANAGER: Player Rigidbody2D not found."
-            );
-        }
     }
 
-    // =========================================================
-    // START
-    // =========================================================
 
+    // ============================================================
+    // UNITY - START
+    // ============================================================
+
+    /// <summary>
+    /// Finds all panels, organises them by page,
+    /// lays them out and determines ComicMan's starting panel.
+    /// </summary>
     private void Start()
     {
-        Debug.Log("=================================================");
-        Debug.Log("PANEL MANAGER: START");
-        Debug.Log("=================================================");
-
-        // Find EVERY panel.
         BuildPageLists();
 
-        // Arrange panels.
         LayoutAllPages();
 
-        // Find the panel containing ComicMan.
         SetCurrentPanel();
 
-        // Artist Mode starts OFF.
         artistMode = false;
 
-        // Nothing is selected initially.
         selectedPanel = null;
         chosenPanel = null;
         heldPanel = null;
 
         UpdateSelectionVisual();
 
-        PrintPageContents();
+        Debug.Log(
+            "[PANEL DEBUG] PanelManager startup complete."
+        );
 
-        Debug.Log("PANEL MANAGER: START COMPLETE.");
+        PrintAllPanelStatus();
     }
 
-    // =========================================================
-    // UPDATE
-    // =========================================================
 
-    private void Update()
-    {
-        if (hopLockTimer > 0f)
-        {
-            hopLockTimer -= Time.deltaTime;
-        }
-
-        if (!artistMode)
-            return;
-
-        HandleArtistModeInput();
-    }
-
-    // =========================================================
-    // LATE UPDATE
-    // =========================================================
-
-    private void LateUpdate()
-    {
-        // If a panel is being carried and ComicMan is attached,
-        // keep ComicMan at the same offset.
-        if (heldPanel != null && carryingPlayer)
-        {
-            CarryPlayerWithPanel();
-        }
-    }
-
-    // =========================================================
+    // ============================================================
     // BUILD PAGE LISTS
-    // =========================================================
+    // ============================================================
 
+    /// <summary>
+    /// Finds EVERY ComicPanel in the scene and places it
+    /// into the correct page list using its PageIndex.
+    ///
+    /// IMPORTANT:
+    /// We NEVER remove the ComicMan panel here.
+    /// It must remain selectable.
+    /// </summary>
     private void BuildPageLists()
     {
         leftPage.panels.Clear();
         rightPage.panels.Clear();
 
-        ComicPanel[] allPanels = FindObjectsByType<ComicPanel>(
-            FindObjectsInactive.Include,
-            FindObjectsSortMode.None
-        );
-
-        Debug.Log("=================================================");
-        Debug.Log("PANEL MANAGER: BUILDING PAGE LISTS");
-        Debug.Log("TOTAL PANELS FOUND = " + allPanels.Length);
+        ComicPanel[] allPanels =
+            FindObjectsByType<ComicPanel>(
+                FindObjectsSortMode.None
+            );
 
         foreach (ComicPanel panel in allPanels)
         {
             if (panel == null)
                 continue;
 
-            // -------------------------------------------------
-            // IMPORTANT:
-            //
-            // DO NOT remove the panel containing ComicMan.
-            //
-            // It remains part of the page layout.
-            // We simply prevent that panel from being moved.
-            // -------------------------------------------------
-
+            // PageIndex decides which page the panel belongs to.
             if (panel.PageIndex == 0)
             {
                 leftPage.panels.Add(panel);
-
-                Debug.Log(
-                    "LEFT PAGE <- " +
-                    panel.name +
-                    " | Slot = " +
-                    panel.SlotIndex
-                );
             }
             else
             {
                 rightPage.panels.Add(panel);
-
-                Debug.Log(
-                    "RIGHT PAGE <- " +
-                    panel.name +
-                    " | Slot = " +
-                    panel.SlotIndex
-                );
             }
         }
 
-        // Sort panels by slot.
+        // Sort each page by slotIndex.
         leftPage.panels.Sort(
             (a, b) => a.SlotIndex.CompareTo(b.SlotIndex)
         );
@@ -320,28 +250,163 @@ public class PanelManager : MonoBehaviour
         );
 
         Debug.Log(
-            "LEFT PAGE COUNT = " +
-            leftPage.panels.Count
-        );
-
-        Debug.Log(
-            "RIGHT PAGE COUNT = " +
+            "[PANEL DEBUG] PAGE LISTS BUILT\n" +
+            "Left page panels: " +
+            leftPage.panels.Count +
+            "\nRight page panels: " +
             rightPage.panels.Count
         );
 
-        Debug.Log("=================================================");
+        PrintPageList("LEFT", leftPage.panels);
+        PrintPageList("RIGHT", rightPage.panels);
     }
 
-    // =========================================================
-    // FIND CURRENT PANEL
-    // =========================================================
 
+    // ============================================================
+    // PRINT PAGE LIST
+    // ============================================================
+
+    /// <summary>
+    /// Prints the panels belonging to a page.
+    /// Used only for debugging.
+    /// </summary>
+    private void PrintPageList(
+        string pageName,
+        List<ComicPanel> panels)
+    {
+        string result =
+            "[PANEL DEBUG] " +
+            pageName +
+            " PAGE ORDER: ";
+
+        for (int i = 0; i < panels.Count; i++)
+        {
+            if (panels[i] == null)
+                continue;
+
+            result +=
+                panels[i].PanelID +
+                "(slot " +
+                panels[i].SlotIndex +
+                ")";
+
+            if (i < panels.Count - 1)
+                result += " -> ";
+        }
+
+        Debug.Log(result);
+    }
+
+
+    // ============================================================
+    // LAYOUT ALL PAGES
+    // ============================================================
+
+    /// <summary>
+    /// Positions all panels in their assigned page slots.
+    /// </summary>
+    private void LayoutAllPages()
+    {
+        LayoutPage(leftPage);
+        LayoutPage(rightPage);
+    }
+
+
+    // ============================================================
+    // LAYOUT ONE PAGE
+    // ============================================================
+
+    /// <summary>
+    /// Positions the panels inside one page according to their
+    /// slotIndex values.
+    ///
+    /// PageIndex is NOT changed here.
+    /// </summary>
+    private void LayoutPage(Page page)
+    {
+        if (page == null || page.pageArea == null)
+            return;
+
+        if (page.panels == null)
+            return;
+
+        Bounds bounds = page.pageArea.bounds;
+
+        int columns = Mathf.Max(1, page.columns);
+        int rows = Mathf.Max(1, page.rows);
+
+        float usableWidth =
+            bounds.size.x - pagePadding * 2f;
+
+        float usableHeight =
+            bounds.size.y - pagePadding * 2f;
+
+        float cellWidth =
+            usableWidth / columns;
+
+        float cellHeight =
+            usableHeight / rows;
+
+        for (int i = 0; i < page.panels.Count; i++)
+        {
+            ComicPanel panel = page.panels[i];
+
+            if (panel == null)
+                continue;
+
+            int slot = panel.SlotIndex;
+
+            int column = slot % columns;
+            int row = slot / columns;
+
+            if (row >= rows)
+            {
+                Debug.LogWarning(
+                    "[PANEL DEBUG] Panel " +
+                    panel.PanelID +
+                    " has slot " +
+                    slot +
+                    " outside page capacity."
+                );
+
+                continue;
+            }
+
+            float x =
+                bounds.min.x +
+                pagePadding +
+                cellWidth * (column + 0.5f);
+
+            float y =
+                bounds.max.y -
+                pagePadding -
+                cellHeight * (row + 0.5f);
+
+            panel.transform.position =
+                new Vector3(
+                    x,
+                    y,
+                    panel.transform.position.z
+                );
+        }
+    }
+
+
+    // ============================================================
+    // FIND CURRENT PANEL
+    // ============================================================
+
+    /// <summary>
+    /// Finds which panel currently contains ComicMan.
+    /// Uses world bounds rather than the panel list.
+    /// </summary>
     private void SetCurrentPanel()
     {
         if (playerBody == null)
         {
             Debug.LogWarning(
-                "PANEL MANAGER: Player Body is NULL."
+                "[PANEL DEBUG] Cannot find current panel: " +
+                "Player Body is missing."
             );
 
             return;
@@ -349,212 +414,202 @@ public class PanelManager : MonoBehaviour
 
         Vector2 playerPosition = playerBody.position;
 
-        ComicPanel[] allPanels = FindObjectsByType<ComicPanel>(
-            FindObjectsInactive.Include,
-            FindObjectsSortMode.None
-        );
+        ComicPanel foundPanel = null;
+
+        ComicPanel[] allPanels =
+            FindObjectsByType<ComicPanel>(
+                FindObjectsSortMode.None
+            );
 
         foreach (ComicPanel panel in allPanels)
         {
             if (panel == null)
                 continue;
 
-            Bounds panelBounds = panel.GetWorldBounds();
+            Bounds panelBounds =
+                panel.GetWorldBounds();
 
             if (panelBounds.Contains(playerPosition))
             {
-                currentPanel = panel;
-
-                Debug.Log(
-                    "CURRENT PANEL = " +
-                    panel.name +
-                    " | Page = " +
-                    panel.PageIndex +
-                    " | Slot = " +
-                    panel.SlotIndex
-                );
-
-                return;
+                foundPanel = panel;
+                break;
             }
         }
 
-        Debug.LogWarning(
-            "PANEL MANAGER: Could not find ComicMan's current panel."
-        );
+        if (foundPanel != null)
+        {
+            SetCurrentPanel(foundPanel);
+        }
+        else
+        {
+            Debug.LogWarning(
+                "[PANEL DEBUG] ComicMan is not inside " +
+                "any panel."
+            );
+        }
     }
 
-    // =========================================================
-    // PANEL TRIGGER VERSION
-    // =========================================================
 
+    // ============================================================
+    // SET CURRENT PANEL DIRECTLY
+    // ============================================================
+
+    /// <summary>
+    /// Sets the panel ComicMan is currently inside.
+    ///
+    /// This changes ONLY the temporary protection state.
+    /// ComicPanel.IsMovable is never modified.
+    /// </summary>
     public void SetCurrentPanel(ComicPanel panel)
     {
         if (panel == null)
+        {
+            Debug.LogWarning(
+                "[PANEL DEBUG] SetCurrentPanel received NULL."
+            );
+
             return;
+        }
+
+        ComicPanel previousPanel = currentPanel;
 
         currentPanel = panel;
 
         Debug.Log(
-            "CURRENT PANEL UPDATED = " +
-            panel.name
+            "[PANEL DEBUG] CURRENT PANEL CHANGED\n" +
+            "Previous: " +
+            (
+                previousPanel != null
+                    ? previousPanel.PanelID
+                    : "None"
+            ) +
+            "\nCurrent: " +
+            currentPanel.PanelID +
+            "\nCurrent Page: " +
+            currentPanel.PageIndex +
+            "\nCurrent Slot: " +
+            currentPanel.SlotIndex
         );
+
+        PrintPanelMovementStatus(
+            previousPanel,
+            currentPanel
+        );
+
+        // If Artist Mode is active, keep selection valid.
+        if (artistMode)
+        {
+            UpdateSelectionVisual();
+        }
     }
 
-    // =========================================================
-    // ARTIST MODE
-    // =========================================================
 
+    // ============================================================
+    // ARTIST MODE
+    // ============================================================
+
+    /// <summary>
+    /// Enables or disables Artist Mode.
+    ///
+    /// IMPORTANT:
+    /// When entering Artist Mode, the current ComicMan panel
+    /// remains selected even if it is immovable.
+    ///
+    /// We do NOT automatically jump to the first movable panel.
+    /// </summary>
     public void SetArtistMode(bool enabled)
     {
         if (!allowArtistMode)
+        {
+            artistMode = false;
+            selectedPanel = null;
+            chosenPanel = null;
+
+            UpdateSelectionVisual();
+
             return;
+        }
 
         artistMode = enabled;
 
-        Debug.Log("=================================================");
-        Debug.Log("PANEL MANAGER: ARTIST MODE = " + artistMode);
-        Debug.Log("=================================================");
+        Debug.Log(
+            "[PANEL DEBUG] ARTIST MODE = " +
+            artistMode
+        );
 
         if (artistMode)
         {
-            // -------------------------------------------------
-            // ENTER ARTIST MODE
-            // -------------------------------------------------
-
-            // Refresh current panel.
+            // Refresh current panel before selecting.
             SetCurrentPanel();
 
-            // Start by selecting ComicMan's current panel.
+            // IMPORTANT:
+            // Select the current panel regardless of movability.
+            //
+            // This prevents the old bug where Artist Mode
+            // automatically skipped to the first movable panel.
             selectedPanel = currentPanel;
 
-            if (selectedPanel != null)
-            {
-                Debug.Log(
-                    "CURRENT PANEL = " +
-                    selectedPanel.name
-                );
-            }
+            chosenPanel = null;
 
-            // -------------------------------------------------
-            // If ComicMan's panel cannot move,
-            // find another movable panel.
-            // -------------------------------------------------
-
-            if (
-                selectedPanel == null ||
-                !IsPanelMovable(selectedPanel)
-            )
-            {
-                Debug.Log(
-                    "CURRENT PANEL CANNOT BE MOVED."
-                );
-
-                selectedPanel = FindFirstMovablePanel();
-            }
-
-            if (selectedPanel != null)
-            {
-                Debug.Log(
-                    "SELECTED PANEL = " +
-                    selectedPanel.name
-                );
-            }
-            else
-            {
-                Debug.LogWarning(
-                    "ARTIST MODE: NO MOVABLE PANELS FOUND."
-                );
-            }
-
-            UpdateSelectionVisual();
+            Debug.Log(
+                "[PANEL DEBUG] Artist Mode selection = " +
+                (
+                    selectedPanel != null
+                        ? selectedPanel.PanelID
+                        : "None"
+                )
+            );
         }
         else
         {
-            // -------------------------------------------------
-            // EXIT ARTIST MODE
-            // -------------------------------------------------
-
-            // Do not leave a panel half-held.
+            // Leaving Artist Mode while holding a panel
+            // cancels the movement safely.
             if (heldPanel != null)
             {
-                Debug.Log(
-                    "ARTIST MODE EXITED WHILE PANEL WAS HELD."
-                );
-
                 CancelPanelMove();
             }
 
             chosenPanel = null;
 
-            UpdateSelectionVisual();
-
-            Debug.Log(
-                "ARTIST MODE EXITED."
-            );
-        }
-    }
-
-    // =========================================================
-    // FIND FIRST MOVABLE PANEL
-    // =========================================================
-
-    private ComicPanel FindFirstMovablePanel()
-    {
-        // Search left page first.
-        foreach (ComicPanel panel in leftPage.panels)
-        {
-            if (panel != null && IsPanelMovable(panel))
-            {
-                return panel;
-            }
+            selectedPanel = null;
         }
 
-        // Then search right page.
-        foreach (ComicPanel panel in rightPage.panels)
-        {
-            if (panel != null && IsPanelMovable(panel))
-            {
-                return panel;
-            }
-        }
-
-        return null;
+        UpdateSelectionVisual();
     }
 
-    // =========================================================
-    // CHECK WHETHER PANEL CAN MOVE
-    // =========================================================
 
-    private bool IsPanelMovable(ComicPanel panel)
+    // ============================================================
+    // ARTIST MODE STATE
+    // ============================================================
+
+    /// <summary>
+    /// Returns whether Artist Mode is currently active.
+    /// </summary>
+    public bool IsArtistMode()
     {
-        if (panel == null)
-            return false;
-
-        // Panel's own Inspector setting.
-        if (!panel.IsMovable)
-            return false;
-
-        // -----------------------------------------------------
-        // IMPORTANT:
-        // The panel containing ComicMan cannot be moved.
-        // -----------------------------------------------------
-
-        if (panel == currentPanel)
-            return false;
-
-        return true;
+        return artistMode;
     }
 
-    // =========================================================
-    // ARTIST MODE INPUT
-    // =========================================================
 
-    private void HandleArtistModeInput()
+    // ============================================================
+    // UNITY - UPDATE
+    // ============================================================
+
+    /// <summary>
+    /// Handles Artist Mode keyboard input.
+    /// </summary>
+    private void Update()
     {
+        if (!artistMode)
+            return;
+
         if (Keyboard.current == null)
             return;
 
-        // Escape cancels a panel move.
+        // --------------------------------------------------------
+        // ESC = CANCEL PANEL MOVEMENT
+        // --------------------------------------------------------
+
         if (Keyboard.current.escapeKey.wasPressedThisFrame)
         {
             if (heldPanel != null)
@@ -565,74 +620,38 @@ public class PanelManager : MonoBehaviour
             return;
         }
 
-        // E = choose / pick up / place.
+        // --------------------------------------------------------
+        // E = PICK UP / PLACE
+        // --------------------------------------------------------
+
         if (Keyboard.current.eKey.wasPressedThisFrame)
         {
             HandleArtistE();
-            return;
         }
 
-        // Movement keys select panels.
-        int horizontal = 0;
-        int vertical = 0;
+        // --------------------------------------------------------
+        // MOVEMENT KEYS = SELECT PANEL
+        // --------------------------------------------------------
 
-        if (
-            Keyboard.current.aKey.wasPressedThisFrame ||
-            Keyboard.current.leftArrowKey.wasPressedThisFrame
-        )
-        {
-            horizontal = -1;
-        }
-
-        if (
-            Keyboard.current.dKey.wasPressedThisFrame ||
-            Keyboard.current.rightArrowKey.wasPressedThisFrame
-        )
-        {
-            horizontal = 1;
-        }
-
-        if (
-            Keyboard.current.wKey.wasPressedThisFrame ||
-            Keyboard.current.upArrowKey.wasPressedThisFrame
-        )
-        {
-            vertical = 1;
-        }
-
-        if (
-            Keyboard.current.sKey.wasPressedThisFrame ||
-            Keyboard.current.downArrowKey.wasPressedThisFrame
-        )
-        {
-            vertical = -1;
-        }
-
-        if (horizontal != 0 || vertical != 0)
-        {
-            NavigateSelection(horizontal, vertical);
-        }
+        HandleSelectionInput();
     }
 
-    // =========================================================
-    // E IN ARTIST MODE
-    // =========================================================
 
+    // ============================================================
+    // ARTIST MODE E
+    // ============================================================
+
+    /// <summary>
+    /// Handles E while in Artist Mode.
+    ///
+    /// E does NOT care whether a panel is selectable.
+    /// It checks whether the selected panel is movable.
+    /// </summary>
     private void HandleArtistE()
     {
-        if (selectedPanel == null)
-        {
-            Debug.LogWarning(
-                "ARTIST MODE: No panel selected."
-            );
-
-            return;
-        }
-
-        // -----------------------------------------------------
-        // If already holding a panel:
-        // E = place it.
-        // -----------------------------------------------------
+        // --------------------------------------------------------
+        // IF HOLDING A PANEL -> PLACE IT
+        // --------------------------------------------------------
 
         if (heldPanel != null)
         {
@@ -640,104 +659,238 @@ public class PanelManager : MonoBehaviour
             return;
         }
 
-        // -----------------------------------------------------
-        // Otherwise:
-        // E = choose the selected panel.
-        // -----------------------------------------------------
+        // --------------------------------------------------------
+        // NO SELECTED PANEL
+        // --------------------------------------------------------
 
-        chosenPanel = selectedPanel;
-
-        Debug.Log("=================================================");
-        Debug.Log(
-            "CHOSEN PANEL = " +
-            chosenPanel.name
-        );
-
-        Debug.Log(
-            "PAGE = " +
-            chosenPanel.PageIndex
-        );
-
-        Debug.Log(
-            "SLOT = " +
-            chosenPanel.SlotIndex
-        );
-
-        Debug.Log(
-            "MOVABLE = " +
-            IsPanelMovable(chosenPanel)
-        );
-
-        Debug.Log("=================================================");
-
-        // Cannot move ComicMan's panel.
-        if (!IsPanelMovable(chosenPanel))
+        if (selectedPanel == null)
         {
             Debug.LogWarning(
-                "CHOSEN PANEL CANNOT BE MOVED."
+                "[PANEL DEBUG] E pressed but no panel is selected."
             );
 
             return;
         }
 
+        chosenPanel = selectedPanel;
+
+        Debug.Log(
+            "[PANEL DEBUG] PANEL CHOSEN\n" +
+            "Panel: " +
+            chosenPanel.PanelID +
+            "\nPage: " +
+            chosenPanel.PageIndex +
+            "\nSlot: " +
+            chosenPanel.SlotIndex +
+            "\nInspector Movable: " +
+            chosenPanel.IsMovable +
+            "\nFinal Movable: " +
+            IsPanelMovable(chosenPanel)
+        );
+
+        // --------------------------------------------------------
+        // CURRENT PANEL / LOCKED PANEL
+        // --------------------------------------------------------
+
+        if (!IsPanelMovable(chosenPanel))
+        {
+            Debug.Log(
+                "[PANEL DEBUG] PANEL CANNOT BE MOVED: " +
+                chosenPanel.PanelID
+            );
+
+            return;
+        }
+
+        // --------------------------------------------------------
+        // PICK UP
+        // --------------------------------------------------------
+
         PickUpSelectedPanel();
     }
 
-    // =========================================================
-    // NAVIGATE PANEL SELECTION
-    // =========================================================
 
+    // ============================================================
+    // HANDLE SELECTION INPUT
+    // ============================================================
+
+    /// <summary>
+    /// Reads WASD and arrow keys and moves the selection
+    /// inside the selected panel's CURRENT PAGE ONLY.
+    ///
+    /// IMPORTANT:
+    /// This function does NOT filter out immovable panels.
+    /// Therefore every panel remains selectable.
+    /// </summary>
+    private void HandleSelectionInput()
+    {
+        int directionX = 0;
+        int directionY = 0;
+
+        // Horizontal input.
+        if (
+            Keyboard.current.aKey.wasPressedThisFrame ||
+            Keyboard.current.leftArrowKey.wasPressedThisFrame
+        )
+        {
+            directionX = -1;
+        }
+
+        if (
+            Keyboard.current.dKey.wasPressedThisFrame ||
+            Keyboard.current.rightArrowKey.wasPressedThisFrame
+        )
+        {
+            directionX = 1;
+        }
+
+        // Vertical input.
+        if (
+            Keyboard.current.wKey.wasPressedThisFrame ||
+            Keyboard.current.upArrowKey.wasPressedThisFrame
+        )
+        {
+            directionY = 1;
+        }
+
+        if (
+            Keyboard.current.sKey.wasPressedThisFrame ||
+            Keyboard.current.downArrowKey.wasPressedThisFrame
+        )
+        {
+            directionY = -1;
+        }
+
+        if (directionX == 0 && directionY == 0)
+            return;
+
+        NavigateSelection(
+            directionX,
+            directionY
+        );
+    }
+
+
+    // ============================================================
+    // NAVIGATE SELECTION
+    // ============================================================
+
+    /// <summary>
+    /// Moves the selection around the grid of the panel's page.
+    ///
+    /// CRITICAL RULES:
+    /// - Immovable panels are still selectable.
+    /// - Selection never crosses to the other page.
+    /// - Navigation uses the panel's PageIndex.
+    /// - Navigation uses SlotIndex.
+    /// </summary>
     private void NavigateSelection(
-        int horizontal,
-        int vertical
-    )
+        int directionX,
+        int directionY)
     {
         if (selectedPanel == null)
             return;
 
-        Page page = GetPageForPanel(selectedPanel);
+        // --------------------------------------------------------
+        // DETERMINE WHICH PAGE THE SELECTED PANEL BELONGS TO
+        // --------------------------------------------------------
 
-        if (page == null || page.panels.Count == 0)
+        Page page =
+            selectedPanel.PageIndex == 0
+                ? leftPage
+                : rightPage;
+
+        if (page == null)
             return;
 
-        int columns = Mathf.Max(1, page.columns);
-        int rows = Mathf.Max(1, page.rows);
+        if (page.panels == null || page.panels.Count == 0)
+            return;
 
-        int currentSlot = selectedPanel.SlotIndex;
+        // --------------------------------------------------------
+        // CURRENT SLOT
+        // --------------------------------------------------------
 
-        int currentColumn = currentSlot % columns;
-        int currentRow = currentSlot / columns;
+        int currentSlot =
+            selectedPanel.SlotIndex;
 
-        currentColumn += horizontal;
-        currentRow += vertical;
+        int columns =
+            Mathf.Max(1, page.columns);
 
-        // Horizontal wrap.
-        if (currentColumn < 0)
-            currentColumn = columns - 1;
+        int rows =
+            Mathf.Max(1, page.rows);
 
-        if (currentColumn >= columns)
-            currentColumn = 0;
+        int currentColumn =
+            currentSlot % columns;
 
-        // Vertical wrap.
-        if (currentRow < 0)
-            currentRow = rows - 1;
+        int currentRow =
+            currentSlot / columns;
 
-        if (currentRow >= rows)
-            currentRow = 0;
+        // --------------------------------------------------------
+        // CALCULATE TARGET SLOT
+        // --------------------------------------------------------
+
+        int targetColumn =
+            currentColumn + directionX;
+
+        int targetRow =
+            currentRow + directionY;
+
+        // --------------------------------------------------------
+        // HORIZONTAL WRAP
+        // --------------------------------------------------------
+
+        if (directionX != 0)
+        {
+            if (targetColumn < 0)
+            {
+                targetColumn = columns - 1;
+            }
+            else if (targetColumn >= columns)
+            {
+                targetColumn = 0;
+            }
+        }
+
+        // --------------------------------------------------------
+        // VERTICAL WRAP
+        // --------------------------------------------------------
+
+        if (directionY != 0)
+        {
+            if (targetRow < 0)
+            {
+                targetRow = rows - 1;
+            }
+            else if (targetRow >= rows)
+            {
+                targetRow = 0;
+            }
+        }
+
+        // --------------------------------------------------------
+        // TARGET SLOT
+        // --------------------------------------------------------
 
         int targetSlot =
-            currentRow * columns +
-            currentColumn;
+            targetRow * columns +
+            targetColumn;
 
-        // Find panel in that slot.
+        // --------------------------------------------------------
+        // FIND PANEL AT TARGET SLOT
+        //
+        // IMPORTANT:
+        // We DO NOT check IsPanelMovable here.
+        // Even an immovable panel must be selectable.
+        // --------------------------------------------------------
+
         ComicPanel targetPanel = null;
 
         foreach (ComicPanel panel in page.panels)
         {
-            if (
-                panel != null &&
-                panel.SlotIndex == targetSlot
-            )
+            if (panel == null)
+                continue;
+
+            if (panel.SlotIndex == targetSlot)
             {
                 targetPanel = panel;
                 break;
@@ -747,35 +900,78 @@ public class PanelManager : MonoBehaviour
         if (targetPanel == null)
         {
             Debug.LogWarning(
-                "ARTIST MODE: No panel found at slot " +
-                targetSlot
+                "[PANEL DEBUG] No panel found at target slot " +
+                targetSlot +
+                " on page " +
+                selectedPanel.PageIndex
             );
 
             return;
         }
 
-        // Selection is allowed to land on the
-        // ComicMan panel, but E will refuse to move it.
+        // --------------------------------------------------------
+        // SELECT TARGET
+        // --------------------------------------------------------
+
         selectedPanel = targetPanel;
 
         Debug.Log(
-            "SELECTED PANEL = " +
-            selectedPanel.name +
-            " | Page = " +
+            "[PANEL DEBUG] SELECTION CHANGED\n" +
+            "Panel: " +
+            selectedPanel.PanelID +
+            "\nPage: " +
             selectedPanel.PageIndex +
-            " | Slot = " +
+            "\nSlot: " +
             selectedPanel.SlotIndex +
-            " | Movable = " +
+            "\nInspector Movable: " +
+            selectedPanel.IsMovable +
+            "\nFinal Movable: " +
             IsPanelMovable(selectedPanel)
         );
 
         UpdateSelectionVisual();
     }
 
-    // =========================================================
-    // PICK UP PANEL
-    // =========================================================
 
+    // ============================================================
+    // CHECK PANEL MOVABILITY
+    // ============================================================
+
+    /// <summary>
+    /// Determines whether a panel can actually be picked up.
+    ///
+    /// This is intentionally DIFFERENT from selection.
+    ///
+    /// A panel is movable when:
+    /// 1. It exists.
+    /// 2. Inspector IsMovable is true.
+    /// 3. It is NOT the panel ComicMan is currently inside.
+    /// </summary>
+    private bool IsPanelMovable(ComicPanel panel)
+    {
+        if (panel == null)
+            return false;
+
+        // Permanent Inspector rule.
+        if (!panel.IsMovable)
+            return false;
+
+        // Temporary runtime rule.
+        // ComicMan's current panel is always protected.
+        if (panel == currentPanel)
+            return false;
+
+        return true;
+    }
+
+
+    // ============================================================
+    // PICK UP SELECTED PANEL
+    // ============================================================
+
+    /// <summary>
+    /// Starts moving the selected panel.
+    /// </summary>
     private void PickUpSelectedPanel()
     {
         if (selectedPanel == null)
@@ -784,7 +980,7 @@ public class PanelManager : MonoBehaviour
         if (!IsPanelMovable(selectedPanel))
         {
             Debug.LogWarning(
-                "PANEL MANAGER: Attempted to pick up immovable panel."
+                "[PANEL DEBUG] Attempted to pick up an immovable panel."
             );
 
             return;
@@ -792,18 +988,19 @@ public class PanelManager : MonoBehaviour
 
         heldPanel = selectedPanel;
 
+        // Save original panel state.
+        originalPanelPage =
+            heldPanel.PageIndex;
+
+        originalPanelSlot =
+            heldPanel.SlotIndex;
+
         originalPanelPosition =
             heldPanel.transform.position;
 
-        originalPageIndex =
-            heldPanel.PageIndex;
-
-        originalSlotIndex =
-            heldPanel.SlotIndex;
-
-        // -----------------------------------------------------
-        // Handle panel contents.
-        // -----------------------------------------------------
+        // --------------------------------------------------------
+        // PREPARE NON-PLAYER CONTENTS
+        // --------------------------------------------------------
 
         heldPanelContents =
             heldPanel.GetComponent<PanelContents>();
@@ -813,11 +1010,11 @@ public class PanelManager : MonoBehaviour
             heldPanelContents.PrepareForPanelMove();
         }
 
-        // -----------------------------------------------------
-        // Carry player only if player happens to be inside.
-        // Normally this should be false because ComicMan's
-        // panel is immovable.
-        // -----------------------------------------------------
+        // --------------------------------------------------------
+        // CHECK WHETHER PLAYER IS INSIDE PANEL
+        // --------------------------------------------------------
+
+        carryingPlayer = false;
 
         if (playerBody != null)
         {
@@ -828,72 +1025,127 @@ public class PanelManager : MonoBehaviour
             {
                 carryingPlayer = true;
 
-                originalPlayerPosition =
-                    playerBody.position;
+                playerOffsetFromPanel =
+                    (Vector3)playerBody.position -
+                    heldPanel.transform.position;
 
-                originalPlayerVelocity =
-                    playerBody.linearVelocity;
+                originalPlayerBodyType =
+                    playerBody.bodyType;
 
                 originalPlayerGravityScale =
                     playerBody.gravityScale;
 
-                playerOffsetFromPanel =
-                (Vector3)playerBody.position -
-                 heldPanel.transform.position;
+                originalPlayerVelocity =
+                    playerBody.linearVelocity;
 
-                playerBody.linearVelocity = Vector2.zero;
+                playerBody.linearVelocity =
+                    Vector2.zero;
+
+                playerBody.angularVelocity =
+                    0f;
+
                 playerBody.gravityScale = 0f;
 
+                playerBody.bodyType =
+                    RigidbodyType2D.Kinematic;
+
                 Debug.Log(
-                    "PANEL MANAGER: ComicMan is being carried."
+                    "[PANEL DEBUG] Player is being carried with panel."
                 );
             }
-            else
-            {
-                carryingPlayer = false;
-            }
         }
 
-        Debug.Log("=================================================");
         Debug.Log(
-            "PANEL PICKED UP = " +
-            heldPanel.name
+            "[PANEL DEBUG] PICKED UP PANEL: " +
+            heldPanel.PanelID +
+            "\nPage: " +
+            heldPanel.PageIndex +
+            "\nSlot: " +
+            heldPanel.SlotIndex
         );
-        Debug.Log("=================================================");
     }
 
-    // =========================================================
-    // CARRY PLAYER
-    // =========================================================
 
-    private void CarryPlayerWithPanel()
-    {
-        if (
-            playerBody == null ||
-            heldPanel == null
-        )
-        {
-            return;
-        }
+    // ============================================================
+    // PLACE HELD PANEL
+    // ============================================================
 
-        playerBody.position =
-            heldPanel.transform.position +
-            playerOffsetFromPanel;
-    }
-
-    // =========================================================
-    // PLACE PANEL
-    // =========================================================
-
+    /// <summary>
+    /// Places the held panel back into its current slot.
+    ///
+    /// Reordering is NOT implemented here yet.
+    /// That will be the next mechanic.
+    /// </summary>
     private void PlaceHeldPanel()
     {
         if (heldPanel == null)
             return;
 
         Debug.Log(
-            "PLACING PANEL = " +
-            heldPanel.name
+            "[PANEL DEBUG] PLACING PANEL: " +
+            heldPanel.PanelID
         );
+
+        RestorePlayerAfterPanelMove();
+
+        if (heldPanelContents != null)
+        {
+            heldPanelContents.RestoreAfterPanelMove();
+        }
+
+        heldPanelContents = null;
+
+        heldPanel = null;
+
+        carryingPlayer = false;
+
+        // Rebuild lists in case anything changed.
+        BuildPageLists();
+
+        LayoutAllPages();
+
+        // Refresh ComicMan's current panel.
+        SetCurrentPanel();
+
+        // Keep the placed panel selected.
+        UpdateSelectionVisual();
+
+        PrintAllPanelStatus();
+    }
+
+
+    // ============================================================
+    // CANCEL PANEL MOVEMENT
+    // ============================================================
+
+    /// <summary>
+    /// Cancels the current panel movement and restores
+    /// the panel to its original position and slot.
+    /// </summary>
+    private void CancelPanelMove()
+    {
+        if (heldPanel == null)
+            return;
+
+        Debug.Log(
+            "[PANEL DEBUG] CANCEL PANEL MOVE: " +
+            heldPanel.PanelID
+        );
+
+        // Restore original page and slot.
+        heldPanel.SetPageIndex(
+            originalPanelPage
+        );
+
+        heldPanel.SetSlotIndex(
+            originalPanelSlot
+        );
+
+        heldPanel.transform.position =
+            originalPanelPosition;
+
+        // Restore player.
+        RestorePlayerAfterPanelMove();
 
         // Restore panel contents.
         if (heldPanelContents != null)
@@ -901,91 +1153,45 @@ public class PanelManager : MonoBehaviour
             heldPanelContents.RestoreAfterPanelMove();
         }
 
-        // Restore player if necessary.
-        RestoreCarriedPlayer();
-
         heldPanelContents = null;
+
+        // Remember which panel should remain selected.
+        ComicPanel restoredPanel =
+            heldPanel;
+
         heldPanel = null;
-        chosenPanel = null;
-        carryingPlayer = false;
 
-        // Re-layout everything.
-        LayoutAllPages();
-
-        // Refresh current panel.
-        SetCurrentPanel();
-
-        // Update highlight.
-        UpdateSelectionVisual();
-
-        PrintPageContents();
-
-        Debug.Log("PANEL PLACED.");
-    }
-
-    // =========================================================
-    // CANCEL PANEL MOVE
-    // =========================================================
-
-    private void CancelPanelMove()
-    {
-        if (heldPanel == null)
-            return;
-
-        Debug.Log(
-            "CANCEL PANEL MOVE = " +
-            heldPanel.name
-        );
-
-        // Restore original page/slot.
-        heldPanel.SetPageIndex(
-            originalPageIndex
-        );
-
-        heldPanel.SetSlotIndex(
-            originalSlotIndex
-        );
-
-        heldPanel.transform.position =
-            originalPanelPosition;
-
-        // Restore contents.
-        if (heldPanelContents != null)
-        {
-            heldPanelContents.RestoreAfterPanelMove();
-        }
-
-        // Restore player.
-        RestoreCarriedPlayer();
-
-        heldPanelContents = null;
-        heldPanel = null;
-        chosenPanel = null;
         carryingPlayer = false;
 
         // Rebuild page lists.
         BuildPageLists();
 
+        // Restore layout.
         LayoutAllPages();
 
-        // Re-select the restored panel.
-        selectedPanel = FindPanelByPageAndSlot(
-            originalPageIndex,
-            originalSlotIndex
-        );
+        // Keep the restored panel selected.
+        selectedPanel = restoredPanel;
+
+        // Refresh current panel.
+        SetCurrentPanel();
 
         UpdateSelectionVisual();
 
         Debug.Log(
-            "PANEL MOVE CANCELLED."
+            "[PANEL DEBUG] PANEL MOVEMENT CANCELLED."
         );
     }
 
-    // =========================================================
-    // RESTORE PLAYER
-    // =========================================================
 
-    private void RestoreCarriedPlayer()
+    // ============================================================
+    // RESTORE PLAYER
+    // ============================================================
+
+    /// <summary>
+    /// Restores ComicMan's Rigidbody2D state after
+    /// a panel movement.
+    /// </summary>
+    private void RestorePlayerAfterPanelMove()
     {
         if (!carryingPlayer)
             return;
@@ -993,186 +1199,88 @@ public class PanelManager : MonoBehaviour
         if (playerBody == null)
             return;
 
-        playerBody.position =
-            originalPlayerPosition;
-
-        playerBody.linearVelocity =
-            originalPlayerVelocity;
+        playerBody.bodyType =
+            originalPlayerBodyType;
 
         playerBody.gravityScale =
             originalPlayerGravityScale;
 
+        playerBody.linearVelocity =
+            originalPlayerVelocity;
+
+        playerBody.angularVelocity = 0f;
+
         carryingPlayer = false;
-    }
 
-    // =========================================================
-    // GET PAGE FOR PANEL
-    // =========================================================
-
-    private Page GetPageForPanel(ComicPanel panel)
-    {
-        if (panel == null)
-            return null;
-
-        if (panel.PageIndex == 0)
-            return leftPage;
-
-        return rightPage;
-    }
-
-    // =========================================================
-    // FIND PANEL BY PAGE + SLOT
-    // =========================================================
-
-    private ComicPanel FindPanelByPageAndSlot(
-        int pageIndex,
-        int slotIndex
-    )
-    {
-        Page page =
-            pageIndex == 0
-            ? leftPage
-            : rightPage;
-
-        foreach (ComicPanel panel in page.panels)
-        {
-            if (
-                panel != null &&
-                panel.SlotIndex == slotIndex
-            )
-            {
-                return panel;
-            }
-        }
-
-        return null;
-    }
-
-    // =========================================================
-    // LAYOUT ALL PAGES
-    // =========================================================
-
-    private void LayoutAllPages()
-    {
-        LayoutPage(leftPage);
-        LayoutPage(rightPage);
-    }
-
-    // =========================================================
-    // LAYOUT ONE PAGE
-    // =========================================================
-
-    private void LayoutPage(Page page)
-    {
-        if (page == null)
-            return;
-
-        if (page.pageArea == null)
-        {
-            Debug.LogWarning(
-                "PANEL MANAGER: Page Area is missing."
-            );
-
-            return;
-        }
-
-        int maxPanels =
-            page.columns * page.rows;
-
-        int count =
-            Mathf.Min(
-                page.panels.Count,
-                maxPanels
-            );
-
-        for (int i = 0; i < count; i++)
-        {
-            ComicPanel panel =
-                page.panels[i];
-
-            if (panel == null)
-                continue;
-
-            panel.SetSlotIndex(i);
-
-            panel.transform.position =
-                GetSlotPosition(page, i);
-        }
-    }
-
-    // =========================================================
-    // GET SLOT POSITION
-    // =========================================================
-
-    private Vector3 GetSlotPosition(
-        Page page,
-        int slotIndex
-    )
-    {
-        Bounds bounds =
-            page.pageArea.bounds;
-
-        int columns =
-            Mathf.Max(1, page.columns);
-
-        int row =
-            slotIndex / columns;
-
-        int column =
-            slotIndex % columns;
-
-        int totalColumns =
-            Mathf.Max(1, page.columns);
-
-        int totalRows =
-            Mathf.Max(1, page.rows);
-
-        float usableWidth =
-            bounds.size.x -
-            pagePadding * 2f;
-
-        float usableHeight =
-            bounds.size.y -
-            pagePadding * 2f;
-
-        float cellWidth =
-            usableWidth / totalColumns;
-
-        float cellHeight =
-            usableHeight / totalRows;
-
-        float x =
-            bounds.min.x +
-            pagePadding +
-            cellWidth * 0.5f +
-            column * cellWidth;
-
-        float y =
-            bounds.max.y -
-            pagePadding -
-            cellHeight * 0.5f -
-            row * cellHeight;
-
-        return new Vector3(
-            x,
-            y,
-            0f
+        Debug.Log(
+            "[PANEL DEBUG] Player Rigidbody restored."
         );
     }
 
-    // =========================================================
-    // UPDATE SELECTION HIGHLIGHT
-    // =========================================================
 
+    // ============================================================
+    // CARRY PLAYER WITH PANEL
+    // ============================================================
+
+    /// <summary>
+    /// Keeps ComicMan at the same local offset from a panel
+    /// while that panel is being moved.
+    /// </summary>
+    private void CarryPlayerWithPanel()
+    {
+        if (!carryingPlayer)
+            return;
+
+        if (heldPanel == null)
+            return;
+
+        if (playerBody == null)
+            return;
+
+        playerBody.position =
+            heldPanel.transform.position +
+            playerOffsetFromPanel;
+    }
+
+
+    // ============================================================
+    // LATE UPDATE
+    // ============================================================
+
+    /// <summary>
+    /// Updates player carrying and selection highlight.
+    /// </summary>
+    private void LateUpdate()
+    {
+        if (heldPanel != null && carryingPlayer)
+        {
+            CarryPlayerWithPanel();
+        }
+
+        if (artistMode)
+        {
+            UpdateSelectionVisual();
+        }
+    }
+
+
+    // ============================================================
+    // SELECTION HIGHLIGHT
+    // ============================================================
+
+    /// <summary>
+    /// Positions the selection highlight around the currently
+    /// selected panel.
+    ///
+    /// The highlight works regardless of whether the panel
+    /// is movable.
+    /// </summary>
     private void UpdateSelectionVisual()
     {
         if (selectionHighlight == null)
             return;
 
-        if (
-            !artistMode ||
-            selectedPanel == null
-        )
+        if (!artistMode || selectedPanel == null)
         {
             selectionHighlight.gameObject.SetActive(false);
             return;
@@ -1183,207 +1291,362 @@ public class PanelManager : MonoBehaviour
         Bounds bounds =
             selectedPanel.GetWorldBounds();
 
-        selectionHighlight.position =
+        Vector3 center =
             bounds.center;
 
-        selectionHighlight.localScale =
+        Vector3 scale =
             new Vector3(
                 bounds.size.x + selectionPadding,
                 bounds.size.y + selectionPadding,
-                1f
+                selectionHighlight.localScale.z
             );
 
-        Debug.Log(
-            "HIGHLIGHT = " +
-            selectedPanel.name
-        );
+        selectionHighlight.position =
+            new Vector3(
+                center.x,
+                center.y,
+                selectionHighlight.position.z
+            );
+
+        selectionHighlight.localScale =
+            scale;
     }
 
-    // =========================================================
-    // PRINT PAGE CONTENTS
-    // =========================================================
 
-    private void PrintPageContents()
+    // ============================================================
+    // AUTOMATIC HOP
+    // ============================================================
+
+    /// <summary>
+    /// Attempts to automatically hop ComicMan to the next
+    /// panel when he exits the current panel.
+    /// </summary>
+    public void TryAutomaticHop(
+        ComicPanel fromPanel,
+        float direction)
     {
-        Debug.Log("=================================================");
-        Debug.Log("PAGE CONTENTS");
+        if (fromPanel == null)
+            return;
 
-        PrintPage("LEFT PAGE", leftPage);
-        PrintPage("RIGHT PAGE", rightPage);
+        if (Time.time <
+            lastHopTime + hopLockDuration)
+        {
+            return;
+        }
 
-        Debug.Log("=================================================");
-    }
-
-    // =========================================================
-    // PRINT ONE PAGE
-    // =========================================================
-
-    private void PrintPage(
-        string pageName,
-        Page page
-    )
-    {
-        Debug.Log(pageName);
+        Page page =
+            fromPanel.PageIndex == 0
+                ? leftPage
+                : rightPage;
 
         if (page == null)
             return;
+
+        if (page.panels == null ||
+            page.panels.Count == 0)
+        {
+            return;
+        }
+
+        ComicPanel targetPanel =
+            FindNextPanel(
+                page,
+                fromPanel,
+                direction
+            );
+
+        if (targetPanel == null)
+        {
+            Debug.Log(
+                "[PANEL DEBUG] No hop target found from " +
+                fromPanel.PanelID
+            );
+
+            return;
+        }
+
+        HopToPanel(targetPanel);
+    }
+
+
+    // ============================================================
+    // FIND NEXT PANEL
+    // ============================================================
+
+    /// <summary>
+    /// Finds the next panel on the SAME page.
+    /// </summary>
+    private ComicPanel FindNextPanel(
+        Page page,
+        ComicPanel fromPanel,
+        float direction)
+    {
+        if (page == null ||
+            fromPanel == null)
+        {
+            return null;
+        }
+
+        int columns =
+            Mathf.Max(1, page.columns);
+
+        int rows =
+            Mathf.Max(1, page.rows);
+
+        int currentSlot =
+            fromPanel.SlotIndex;
+
+        int currentColumn =
+            currentSlot % columns;
+
+        int currentRow =
+            currentSlot / columns;
+
+        int targetColumn =
+            currentColumn +
+            (direction > 0 ? 1 : -1);
+
+        // Horizontal wrapping within the same page.
+        if (targetColumn < 0)
+        {
+            targetColumn = columns - 1;
+        }
+        else if (targetColumn >= columns)
+        {
+            targetColumn = 0;
+        }
+
+        int targetSlot =
+            currentRow * columns +
+            targetColumn;
+
+        // If target slot somehow exceeds the page,
+        // wrap safely.
+        if (targetSlot < 0 ||
+            targetSlot >= columns * rows)
+        {
+            return null;
+        }
 
         foreach (ComicPanel panel in page.panels)
         {
             if (panel == null)
                 continue;
 
-            Debug.Log(
-                "Slot " +
-                panel.SlotIndex +
-                " = " +
-                panel.name
-            );
+            if (panel.SlotIndex == targetSlot)
+            {
+                return panel;
+            }
         }
+
+        return null;
     }
 
-    // =========================================================
-    // GET PANEL NAME
-    // =========================================================
 
-    private string GetPanelName(ComicPanel panel)
-    {
-        if (panel == null)
-            return "NULL";
-
-        return panel.name;
-    }
-
-    // =========================================================
-    // AUTOMATIC HOP
-    // =========================================================
-
-    public void TryAutomaticHop(
-        ComicPanel fromPanel,
-        float direction
-    )
-    {
-        if (fromPanel == null)
-            return;
-
-        if (hopLockTimer > 0f)
-            return;
-
-        Page page =
-            GetPageForPanel(fromPanel);
-
-        if (page == null)
-            return;
-
-        if (page.panels.Count == 0)
-            return;
-
-        int currentSlot =
-            fromPanel.SlotIndex;
-
-        int columns =
-            Mathf.Max(1, page.columns);
-
-        int row =
-            currentSlot / columns;
-
-        int column =
-            currentSlot % columns;
-
-        if (direction > 0)
-            column++;
-        else
-            column--;
-
-        // Horizontal wrapping.
-        if (column < 0)
-            column = columns - 1;
-
-        if (column >= columns)
-            column = 0;
-
-        int targetSlot =
-            row * columns +
-            column;
-
-        ComicPanel target =
-            FindPanelByPageAndSlot(
-                fromPanel.PageIndex,
-                targetSlot
-            );
-
-        if (target == null)
-            return;
-
-        HopToPanel(target);
-
-        hopLockTimer =
-            hopLockDuration;
-    }
-
-    // =========================================================
+    // ============================================================
     // HOP TO PANEL
-    // =========================================================
+    // ============================================================
 
-    private void HopToPanel(ComicPanel target)
+    /// <summary>
+    /// Moves ComicMan to the closest hop point of the target panel.
+    /// </summary>
+    // ============================================================
+    // HOP TO PANEL
+    // Moves ComicMan to the closest hop point of the target panel.
+    // ============================================================
+    private void HopToPanel(ComicPanel targetPanel)
     {
-        if (
-            playerBody == null ||
-            target == null
-        )
-        {
+        if (targetPanel == null)
             return;
-        }
 
+        if (playerBody == null)
+            return;
+
+        // GetClosestHopPoint returns a Transform.
         Transform hopPoint =
-            target.GetClosestHopPoint(
+            targetPanel.GetClosestHopPoint(
                 playerBody.position
             );
 
-        if (hopPoint != null)
-        {
-            playerBody.position =
-                hopPoint.position;
-
-            Debug.Log(
-                "Hopped to " +
-                target.name +
-                " at world position " +
-                hopPoint.position
-            );
-        }
-        else
+        if (hopPoint == null)
         {
             Debug.LogWarning(
-                "No hop point found on " +
-                target.name
+                "[PANEL DEBUG] No hop point found on " +
+                targetPanel.PanelID
             );
+
+            return;
         }
 
-        currentPanel = target;
+        // Transform.position is a Vector3.
+        playerBody.position = hopPoint.position;
+
+        playerBody.linearVelocity =
+            Vector2.zero;
+
+        lastHopTime =
+            Time.time;
+
+        // Tell PanelManager that ComicMan is now inside
+        // this panel.
+        SetCurrentPanel(targetPanel);
+
+        Debug.Log(
+            "[PANEL DEBUG] HOPPED TO " +
+            targetPanel.PanelID +
+            " at world position " +
+            hopPoint.position
+        );
     }
 
-    // =========================================================
-    // PAGE GIZMOS
-    // =========================================================
 
-    private void OnDrawGizmos()
+    // ============================================================
+    // PRINT MOVEMENT STATUS
+    // ============================================================
+
+    /// <summary>
+    /// Prints the dynamic movement state of the previous
+    /// and new current panels.
+    /// </summary>
+    private void PrintPanelMovementStatus(
+        ComicPanel previousPanel,
+        ComicPanel newCurrentPanel)
     {
-        DrawPageGizmos(leftPage);
-        DrawPageGizmos(rightPage);
+        string previousStatus =
+            "None";
+
+        if (previousPanel != null)
+        {
+            previousStatus =
+                previousPanel.PanelID +
+                " | Inspector Movable = " +
+                previousPanel.IsMovable +
+                " | Final Movable = " +
+                IsPanelMovable(previousPanel);
+        }
+
+        string currentStatus =
+            "None";
+
+        if (newCurrentPanel != null)
+        {
+            currentStatus =
+                newCurrentPanel.PanelID +
+                " | Inspector Movable = " +
+                newCurrentPanel.IsMovable +
+                " | Final Movable = " +
+                IsPanelMovable(newCurrentPanel);
+        }
+
+        Debug.Log(
+            "[PANEL DEBUG] MOVEMENT STATUS\n" +
+            "Previous: " +
+            previousStatus +
+            "\nCurrent: " +
+            currentStatus
+        );
     }
 
-    // =========================================================
-    // DRAW PAGE GIZMOS
-    // =========================================================
 
-    private void DrawPageGizmos(Page page)
+    // ============================================================
+    // PRINT ALL PANEL STATUS
+    // ============================================================
+
+    /// <summary>
+    /// Prints every panel's page, slot, selection and
+    /// movement state for debugging.
+    /// </summary>
+    private void PrintAllPanelStatus()
     {
-        if (page == null)
+        Debug.Log(
+            "========== PANEL STATUS BEGIN =========="
+        );
+
+        PrintPageStatus(
+            "LEFT",
+            leftPage.panels
+        );
+
+        PrintPageStatus(
+            "RIGHT",
+            rightPage.panels
+        );
+
+        Debug.Log(
+            "========== PANEL STATUS END =========="
+        );
+    }
+
+
+    // ============================================================
+    // PRINT PAGE STATUS
+    // ============================================================
+
+    /// <summary>
+    /// Prints detailed information about all panels on one page.
+    /// </summary>
+    private void PrintPageStatus(
+        string pageName,
+        List<ComicPanel> panels)
+    {
+        if (panels == null)
             return;
 
-        if (page.pageArea == null)
+        foreach (ComicPanel panel in panels)
+        {
+            if (panel == null)
+                continue;
+
+            Debug.Log(
+                "[PANEL DEBUG] " +
+                pageName +
+                " | " +
+                panel.PanelID +
+                " | Page=" +
+                panel.PageIndex +
+                " | Slot=" +
+                panel.SlotIndex +
+                " | Selected=" +
+                (panel == selectedPanel) +
+                " | Current=" +
+                (panel == currentPanel) +
+                " | InspectorMovable=" +
+                panel.IsMovable +
+                " | FinalMovable=" +
+                IsPanelMovable(panel)
+            );
+        }
+    }
+
+
+    // ============================================================
+    // GIZMOS
+    // ============================================================
+
+    /// <summary>
+    /// Draws page boundaries in the Unity Scene view.
+    /// </summary>
+    private void OnDrawGizmosSelected()
+    {
+        DrawPageGizmo(leftPage);
+        DrawPageGizmo(rightPage);
+    }
+
+
+    // ============================================================
+    // DRAW PAGE GIZMO
+    // ============================================================
+
+    /// <summary>
+    /// Draws one page's BoxCollider2D bounds.
+    /// </summary>
+    private void DrawPageGizmo(Page page)
+    {
+        if (page == null ||
+            page.pageArea == null)
+        {
             return;
+        }
 
         Bounds bounds =
             page.pageArea.bounds;
