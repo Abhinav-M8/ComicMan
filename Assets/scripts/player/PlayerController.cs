@@ -1,8 +1,27 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
 
+/// <summary>
+/// Controls ComicMan's movement, jumping, death state,
+/// and Artist Mode toggle.
+/// 
+/// NORMAL MODE:
+/// A/D or Left/Right = movement
+/// W/Up/Space = jump
+/// E = attack
+/// Q = Artist Mode
+/// 
+/// ARTIST MODE:
+/// Player movement is disabled.
+/// PanelManager handles WASD/Arrow/E.
+/// Q exits Artist Mode.
+/// </summary>
 public class PlayerController : MonoBehaviour
 {
+    // =========================================================
+    // MOVEMENT SETTINGS
+    // =========================================================
+
     [Header("Movement")]
     [SerializeField] private float moveSpeed = 6f;
     [SerializeField] private float groundAcceleration = 35f;
@@ -10,18 +29,38 @@ public class PlayerController : MonoBehaviour
     [SerializeField] private float airAcceleration = 12f;
     [SerializeField] private float airDeceleration = 2f;
 
+    // =========================================================
+    // JUMP SETTINGS
+    // =========================================================
+
     [Header("Jump")]
     [SerializeField] private float jumpForce = 12f;
     [SerializeField] private float coyoteTime = 0.12f;
     [SerializeField] private float jumpBufferTime = 0.12f;
+
+    // =========================================================
+    // GROUND CHECK
+    // =========================================================
 
     [Header("Ground Check")]
     [SerializeField] private Transform groundCheck;
     [SerializeField] private float groundCheckRadius = 0.12f;
     [SerializeField] private LayerMask groundLayer;
 
+    // =========================================================
+    // ARTIST MODE
+    // =========================================================
+
     [Header("Artist Mode")]
     [SerializeField] private bool artistModeEnabled = true;
+
+    // Direct reference to PanelManager.
+    // This prevents us from relying only on the singleton.
+    [SerializeField] private PanelManager panelManager;
+
+    // =========================================================
+    // INTERNAL VARIABLES
+    // =========================================================
 
     private Rigidbody2D rb;
 
@@ -34,121 +73,155 @@ public class PlayerController : MonoBehaviour
 
     private float originalGravityScale;
 
+    // =========================================================
+    // PUBLIC PROPERTIES
+    // =========================================================
 
-    // ==================== PUBLIC PROPERTIES ====================
-
-    // Returns whether Artist Mode is currently active.
     public bool IsArtistMode => artistMode;
-
-    // Returns whether ComicMan is dead.
     public bool IsDead => isDead;
-
-    // Returns whether ComicMan is currently touching the ground.
     public bool IsGrounded => isGrounded;
 
-    // ===================== PUBLIC PROPERTIES END =====================
+    // =========================================================
+    // AWAKE
+    // =========================================================
 
-
-    // ==================== UNITY START ====================
-
-    // Gets required components and stores the original gravity.
     private void Awake()
     {
         rb = GetComponent<Rigidbody2D>();
 
         originalGravityScale = rb.gravityScale;
+
+        // If PanelManager was not manually assigned,
+        // try to find it automatically.
+        if (panelManager == null)
+        {
+            panelManager = FindFirstObjectByType<PanelManager>();
+        }
+
+        if (panelManager != null)
+        {
+            Debug.Log("PLAYER CONTROLLER: PanelManager found.");
+        }
+        else
+        {
+            Debug.LogWarning(
+                "PLAYER CONTROLLER: PanelManager reference is currently NULL."
+            );
+        }
     }
 
+    // =========================================================
+    // UPDATE
+    // =========================================================
 
-    // Reads player input every frame.
     private void Update()
     {
+        // Dead players do not process input.
         if (isDead)
             return;
 
-        CheckGrounded();
-
-        UpdateTimers();
-
+        // Q always handles Artist Mode.
         HandleArtistModeToggle();
 
+        // Artist Mode disables normal player controls.
         if (artistMode)
-        {
             return;
-        }
 
         HandleJumpInput();
     }
 
+    // =========================================================
+    // FIXED UPDATE
+    // =========================================================
 
-    // Handles physics-based movement.
     private void FixedUpdate()
     {
         if (isDead)
             return;
 
+        // Do not move ComicMan while Artist Mode is active.
         if (artistMode)
         {
-            rb.linearVelocity = new Vector2(0f, rb.linearVelocity.y);
+            rb.linearVelocity = Vector2.zero;
             return;
         }
 
-        HandleMovement();
+        CheckGround();
 
+        HandleMovement();
         HandleJump();
     }
 
-    // ===================== UNITY END =====================
+    // =========================================================
+    // ARTIST MODE TOGGLE
+    // Q = ENTER / EXIT ARTIST MODE
+    // =========================================================
 
-
-    // ==================== GROUND CHECK ====================
-
-    // Checks whether ComicMan is standing on a Ground-layer object.
-    private void CheckGrounded()
+    private void HandleArtistModeToggle()
     {
-        if (groundCheck == null)
+        if (!artistModeEnabled)
+            return;
+
+        if (Keyboard.current == null)
+            return;
+
+        if (!Keyboard.current.qKey.wasPressedThisFrame)
+            return;
+
+        Debug.Log("=================================================");
+        Debug.Log("PLAYER CONTROLLER: Q PRESSED");
+        Debug.Log("=================================================");
+
+        artistMode = !artistMode;
+
+        Debug.Log("Artist Mode = " + artistMode);
+
+        // Stop ComicMan while Artist Mode is active.
+        if (artistMode)
         {
-            isGrounded = false;
+            rb.linearVelocity = Vector2.zero;
+
+            Debug.Log(
+                "PLAYER CONTROLLER: Sending Artist Mode TRUE to PanelManager."
+            );
+        }
+        else
+        {
+            Debug.Log(
+                "PLAYER CONTROLLER: Sending Artist Mode FALSE to PanelManager."
+            );
+        }
+
+        // -----------------------------------------------------
+        // Make sure we have a PanelManager.
+        // -----------------------------------------------------
+
+        if (panelManager == null)
+        {
+            panelManager = FindFirstObjectByType<PanelManager>();
+        }
+
+        if (panelManager == null)
+        {
+            Debug.LogError(
+                "PLAYER CONTROLLER: Could not find PanelManager!"
+            );
+
+            // Don't leave ComicMan stuck in Artist Mode
+            // if PanelManager doesn't exist.
+            artistMode = false;
+
             return;
         }
 
-        isGrounded = Physics2D.OverlapCircle(
-            groundCheck.position,
-            groundCheckRadius,
-            groundLayer
-        ) != null;
-
-        if (isGrounded)
-        {
-            coyoteTimer = coyoteTime;
-        }
+        // Tell PanelManager about the state change.
+        panelManager.SetArtistMode(artistMode);
     }
 
-    // ===================== GROUND CHECK END =====================
+    // =========================================================
+    // MOVEMENT
+    // =========================================================
 
-
-    // ==================== TIMERS ====================
-
-    // Updates the coyote and jump-buffer timers.
-    private void UpdateTimers()
-    {
-        if (!isGrounded)
-        {
-            coyoteTimer -= Time.deltaTime;
-        }
-
-        if (jumpBufferTimer > 0f)
-        {
-            jumpBufferTimer -= Time.deltaTime;
-        }
-    }
-
-    // ===================== TIMERS END =====================
-
-
-    // ==================== MOVEMENT ====================
-
-    // Reads horizontal input and smoothly moves ComicMan.
     private void HandleMovement()
     {
         if (Keyboard.current == null)
@@ -172,116 +245,104 @@ public class PlayerController : MonoBehaviour
 
         float acceleration;
 
-        if (isGrounded)
+        if (Mathf.Abs(input) > 0.01f)
         {
-            acceleration =
-                Mathf.Abs(input) > 0.01f
-                    ? groundAcceleration
-                    : groundDeceleration;
+            acceleration = isGrounded
+                ? groundAcceleration
+                : airAcceleration;
         }
         else
         {
-            acceleration =
-                Mathf.Abs(input) > 0.01f
-                    ? airAcceleration
-                    : airDeceleration;
+            acceleration = isGrounded
+                ? groundDeceleration
+                : airDeceleration;
         }
 
-        float newVelocityX = Mathf.MoveTowards(
+        float newX = Mathf.MoveTowards(
             rb.linearVelocity.x,
             targetSpeed,
             acceleration * Time.fixedDeltaTime
         );
 
         rb.linearVelocity = new Vector2(
-            newVelocityX,
+            newX,
             rb.linearVelocity.y
         );
     }
 
-    // ===================== MOVEMENT END =====================
+    // =========================================================
+    // JUMP INPUT
+    // =========================================================
 
-
-    // ==================== JUMP ====================
-
-    // Detects jump input and stores it briefly for jump buffering.
     private void HandleJumpInput()
     {
         if (Keyboard.current == null)
             return;
 
-        bool jumpPressed =
+        if (
             Keyboard.current.wKey.wasPressedThisFrame ||
             Keyboard.current.upArrowKey.wasPressedThisFrame ||
-            Keyboard.current.spaceKey.wasPressedThisFrame;
-
-        if (jumpPressed)
+            Keyboard.current.spaceKey.wasPressedThisFrame
+        )
         {
             jumpBufferTimer = jumpBufferTime;
         }
-    }
-
-
-    // Performs the jump when the jump conditions are satisfied.
-    private void HandleJump()
-    {
-        if (jumpBufferTimer <= 0f)
-            return;
-
-        if (coyoteTimer <= 0f)
-            return;
-
-        rb.linearVelocity = new Vector2(
-            rb.linearVelocity.x,
-            jumpForce
-        );
-
-        jumpBufferTimer = 0f;
-        coyoteTimer = 0f;
-    }
-
-    // ===================== JUMP END =====================
-
-
-    // ==================== ARTIST MODE ====================
-
-    // Toggles Artist Mode using Q.
-    private void HandleArtistModeToggle()
-    {
-        if (!artistModeEnabled)
-            return;
-
-        if (Keyboard.current == null)
-            return;
-
-        if (!Keyboard.current.qKey.wasPressedThisFrame)
-            return;
-
-        SetArtistMode(!artistMode);
-    }
-
-
-    // Enables or disables Artist Mode.
-    public void SetArtistMode(bool enabled)
-    {
-        artistMode = enabled;
-
-        if (artistMode)
+        else
         {
-            // Stop horizontal movement while entering Artist Mode.
-            rb.linearVelocity = new Vector2(
-                0f,
-                rb.linearVelocity.y
-            );
+            jumpBufferTimer -= Time.deltaTime;
         }
     }
 
-    // ===================== ARTIST MODE END =====================
+    // =========================================================
+    // JUMP
+    // =========================================================
 
+    private void HandleJump()
+    {
+        if (isGrounded)
+        {
+            coyoteTimer = coyoteTime;
+        }
+        else
+        {
+            coyoteTimer -= Time.fixedDeltaTime;
+        }
 
-    // ==================== DEATH ====================
+        if (jumpBufferTimer > 0f && coyoteTimer > 0f)
+        {
+            rb.linearVelocity = new Vector2(
+                rb.linearVelocity.x,
+                jumpForce
+            );
 
-    // Stops ComicMan after death.
+            jumpBufferTimer = 0f;
+            coyoteTimer = 0f;
+        }
+    }
+
+    // =========================================================
+    // GROUND CHECK
+    // =========================================================
+
+    private void CheckGround()
+    {
+        if (groundCheck == null)
+        {
+            isGrounded = false;
+            return;
+        }
+
+        isGrounded = Physics2D.OverlapCircle(
+            groundCheck.position,
+            groundCheckRadius,
+            groundLayer
+        ) != null;
+    }
+
+    // =========================================================
+    // DEATH
+    // =========================================================
+
     public void HandleDeath()
     {
         if (isDead)
@@ -292,25 +353,15 @@ public class PlayerController : MonoBehaviour
         artistMode = false;
 
         rb.linearVelocity = Vector2.zero;
-
-        // Keep the Rigidbody active but stop normal gravity movement.
         rb.gravityScale = 0f;
 
-        // ==================== DEBUG START ====================
-
-        Debug.Log(
-            "[PlayerController] ComicMan has died."
-        );
-
-        // ===================== DEBUG END =====================
+        Debug.Log("PLAYER CONTROLLER: ComicMan died.");
     }
 
-    // ===================== DEATH END =====================
+    // =========================================================
+    // DEBUG GIZMO
+    // =========================================================
 
-
-    // ==================== DEBUG ====================
-
-    // Draws the ground-check area in the Scene view.
     private void OnDrawGizmosSelected()
     {
         if (groundCheck == null)
@@ -321,6 +372,4 @@ public class PlayerController : MonoBehaviour
             groundCheckRadius
         );
     }
-
-    // ===================== DEBUG END =====================
 }
