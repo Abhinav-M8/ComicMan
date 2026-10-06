@@ -60,6 +60,9 @@ public class PanelManager : MonoBehaviour
     [SerializeField] private Rigidbody2D playerBody;
     [SerializeField] private PlayerController playerController;
 
+    [Header("Panel Reordering")]
+    [SerializeField] private PanelReorderer panelReorderer;
+
     [Header("Pages")]
     [SerializeField] private Page leftPage;
     [SerializeField] private Page rightPage;
@@ -166,6 +169,12 @@ public class PanelManager : MonoBehaviour
         {
             playerController =
                 playerBody.GetComponent<PlayerController>();
+        }
+
+        if (panelReorderer == null)
+        {
+            panelReorderer =
+                FindFirstObjectByType<PanelReorderer>();
         }
     }
 
@@ -1081,8 +1090,98 @@ public class PanelManager : MonoBehaviour
         if (heldPanel == null)
             return;
 
+        // --------------------------------------------------------
+        // The highlighted panel is the destination while a panel
+        // is being held.
+        // --------------------------------------------------------
+
+        ComicPanel destinationPanel = selectedPanel;
+
+        if (destinationPanel == null)
+        {
+            Debug.LogWarning(
+                "[PANEL DEBUG] Cannot place panel: " +
+                "no destination is selected."
+            );
+
+            return;
+        }
+
+        // --------------------------------------------------------
+        // The moving panel cannot be inserted into its own slot.
+        // --------------------------------------------------------
+
+        if (destinationPanel == heldPanel)
+        {
+            Debug.Log(
+                "[PANEL DEBUG] PLACE CANCELLED: " +
+                "destination is the held panel."
+            );
+
+            return;
+        }
+
+        // --------------------------------------------------------
+        // A protected panel is never allowed to be displaced.
+        // This includes ComicMan's current panel.
+        // --------------------------------------------------------
+
+        if (!IsPanelMovable(destinationPanel))
+        {
+            Debug.Log(
+                "[PANEL DEBUG] PLACE REFUSED: destination " +
+                destinationPanel.PanelID +
+                " is protected."
+            );
+
+            return;
+        }
+
         Debug.Log(
-            "[PANEL DEBUG] PLACING PANEL: " +
+            "[PANEL DEBUG] REQUESTING INSERTION\n" +
+            "Moving: " +
+            heldPanel.PanelID +
+            "\nFrom Slot: " +
+            heldPanel.SlotIndex +
+            "\nDestination: " +
+            destinationPanel.PanelID +
+            "\nDestination Slot: " +
+            destinationPanel.SlotIndex
+        );
+
+        // --------------------------------------------------------
+        // PanelReorderer performs ONLY the slot reordering.
+        // PanelManager remains responsible for player/content
+        // state and visual layout.
+        // --------------------------------------------------------
+
+        if (panelReorderer == null)
+        {
+            Debug.LogError(
+                "[PANEL DEBUG] PanelReorderer reference is missing."
+            );
+
+            return;
+        }
+
+        bool reordered =
+            panelReorderer.TryReorderPanel(
+                heldPanel,
+                destinationPanel
+            );
+
+        if (!reordered)
+        {
+            Debug.Log(
+                "[PANEL DEBUG] REORDER FAILED. " +
+                "Panel was not placed."
+            );
+
+            return;
+        }
+
+        Debug.Log(
+            "[PANEL DEBUG] REORDER SUCCESSFUL: " +
             heldPanel.PanelID
         );
 
@@ -1095,19 +1194,37 @@ public class PanelManager : MonoBehaviour
 
         heldPanelContents = null;
 
-        heldPanel = null;
+        // Keep the moved panel selected after reordering.
+        ComicPanel reorderedPanel =
+            heldPanel;
 
+        heldPanel = null;
         carryingPlayer = false;
 
-        // Rebuild lists in case anything changed.
+        // --------------------------------------------------------
+        // Rebuild page lists so navigation uses the new slots.
+        // --------------------------------------------------------
+
         BuildPageLists();
+
+        // --------------------------------------------------------
+        // Move every panel to its new slot.
+        // --------------------------------------------------------
 
         LayoutAllPages();
 
+        // --------------------------------------------------------
         // Refresh ComicMan's current panel.
+        // --------------------------------------------------------
+
         SetCurrentPanel();
 
-        // Keep the placed panel selected.
+        // --------------------------------------------------------
+        // Keep the reordered panel highlighted.
+        // --------------------------------------------------------
+
+        selectedPanel = reorderedPanel;
+
         UpdateSelectionVisual();
 
         PrintAllPanelStatus();
@@ -1402,28 +1519,101 @@ public class PanelManager : MonoBehaviour
         int currentRow =
             currentSlot / columns;
 
-        int targetColumn =
-            currentColumn +
-            (direction > 0 ? 1 : -1);
+        int targetColumn = currentColumn;
+        int targetRow = currentRow;
 
-        // Horizontal wrapping within the same page.
-        if (targetColumn < 0)
+        // --------------------------------------------------------
+        // HOP RIGHT
+        // --------------------------------------------------------
+        // Normal case:
+        //   1 -> 2
+        //   2 -> 3
+        //   4 -> 5
+        //   5 -> 6
+        //
+        // At the end of a row, move to the FIRST panel of the
+        // NEXT row:
+        //   3 -> 4
+        //   6 -> 7
+        //
+        // At the final panel of the page, do nothing for now.
+        // Page-to-page hopping will be added later when the
+        // required pin/game-object mechanic is implemented.
+        // --------------------------------------------------------
+        if (direction > 0)
         {
-            targetColumn = columns - 1;
+            if (currentColumn < columns - 1)
+            {
+                targetColumn = currentColumn + 1;
+            }
+            else
+            {
+                if (currentRow >= rows - 1)
+                {
+                    Debug.Log(
+                        "[PANEL DEBUG] RIGHT EDGE OF PAGE REACHED FROM " +
+                        fromPanel.PanelID +
+                        ". Page-to-page hop is not implemented yet."
+                    );
+
+                    return null;
+                }
+
+                targetColumn = 0;
+                targetRow = currentRow + 1;
+            }
         }
-        else if (targetColumn >= columns)
+
+        // --------------------------------------------------------
+        // HOP LEFT
+        // --------------------------------------------------------
+        // Normal case:
+        //   3 -> 2
+        //   2 -> 1
+        //   6 -> 5
+        //   5 -> 4
+        //
+        // At the START of a row, move to the LAST panel of the
+        // PREVIOUS row:
+        //   4 -> 3
+        //   7 -> 6
+        //
+        // At Panel 1 there is no previous panel, so return Panel 1
+        // itself. HopToPanel() will therefore place ComicMan back
+        // on the same panel's closest hop point.
+        // --------------------------------------------------------
+        else
         {
-            targetColumn = 0;
+            if (currentColumn > 0)
+            {
+                targetColumn = currentColumn - 1;
+            }
+            else
+            {
+                if (currentRow <= 0)
+                {
+                    Debug.Log(
+                        "[PANEL DEBUG] LEFT EDGE OF PAGE REACHED FROM " +
+                        fromPanel.PanelID +
+                        ". Returning to the same panel."
+                    );
+
+                    return fromPanel;
+                }
+
+                targetColumn = columns - 1;
+                targetRow = currentRow - 1;
+            }
         }
 
         int targetSlot =
-            currentRow * columns +
+            targetRow * columns +
             targetColumn;
 
         // If target slot somehow exceeds the page,
-        // wrap safely.
+        // fail safely without changing ComicMan's position.
         if (targetSlot < 0 ||
-            targetSlot >= columns * rows)
+            targetSlot >= page.panels.Count + 1)
         {
             return null;
         }
@@ -1435,13 +1625,29 @@ public class PanelManager : MonoBehaviour
 
             if (panel.SlotIndex == targetSlot)
             {
+                Debug.Log(
+                    "[PANEL DEBUG] HOP ROUTE: " +
+                    fromPanel.PanelID +
+                    " -> " +
+                    panel.PanelID +
+                    " | from slot " +
+                    currentSlot +
+                    " to slot " +
+                    targetSlot
+                );
+
                 return panel;
             }
         }
 
+        Debug.LogWarning(
+            "[PANEL DEBUG] No panel exists at target slot " +
+            targetSlot +
+            " on the current page."
+        );
+
         return null;
     }
-
 
     // ============================================================
     // HOP TO PANEL

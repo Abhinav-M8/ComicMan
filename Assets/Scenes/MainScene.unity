@@ -270,11 +270,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 5466808439120167989, guid: fa9def429ec7bb345885cca0ae8af3a3, type: 3}
       propertyPath: pageIndex
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 5466808439120167989, guid: fa9def429ec7bb345885cca0ae8af3a3, type: 3}
       propertyPath: slotIndex
-      value: 1
+      value: 3
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
@@ -526,15 +526,16 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::PanelManager
   playerBody: {fileID: 1270710956}
   playerController: {fileID: 1270710959}
+  panelReorderer: {fileID: 1836891996}
   leftPage:
     pageArea: {fileID: 37248185}
     columns: 2
-    rows: 1
+    rows: 2
     panels: []
   rightPage:
     pageArea: {fileID: 1496800907}
-    columns: 2
-    rows: 1
+    columns: 0
+    rows: 0
     panels: []
   horizontalSpacing: 0.2
   verticalSpacing: 0.2
@@ -1078,11 +1079,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 5466808439120167989, guid: fa9def429ec7bb345885cca0ae8af3a3, type: 3}
       propertyPath: pageIndex
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 5466808439120167989, guid: fa9def429ec7bb345885cca0ae8af3a3, type: 3}
       propertyPath: slotIndex
-      value: 0
+      value: 2
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
@@ -1945,6 +1946,51 @@ RectTransform:
   m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: -20, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
+--- !u!1 &1836891995
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1836891997}
+  - component: {fileID: 1836891996}
+  m_Layer: 0
+  m_Name: PanelReorderer
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &1836891996
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1836891995}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4e1a92298e96b694fbc6c160f35a271e, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PanelReorderer
+  debugLogs: 1
+--- !u!4 &1836891997
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1836891995}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 61.02267, y: -12.78447, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1923138049
 GameObject:
   m_ObjectHideFlags: 0
@@ -2435,6 +2481,7 @@ SceneRoots:
   - {fileID: 1496800909}
   - {fileID: 1270710958}
   - {fileID: 370061104}
+  - {fileID: 1836891997}
   - {fileID: 1668640552}
   - {fileID: 845535987}
   - {fileID: 6610947371758685513}
